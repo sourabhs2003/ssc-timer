@@ -1,0 +1,32 @@
+{
+  "name": "SSC-X Focus Tracker",
+  "short_name": "SSC-X",
+  "description": "A minimal, fast study tracking system for SSC CGL 2027 preparation.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#6366f1",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable any"
+    }
+  ],
+  "categories": ["education", "productivity"],
+  "shortcuts": [
+    {
+      "name": "Start Timer",
+      "url": "./index.html#timer",
+      "description": "Go directly to study timer"
+    }
+  ]
+}

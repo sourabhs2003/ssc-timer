@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0f" />
+  <meta name="description" content="SSC-X Focus Tracker – minimal study timer for SSC CGL 2027 prep" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>SSC-X Focus Tracker</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="stylesheet" href="./style.css" />
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <!-- Firebase compat SDK (v9 compat – no build step needed) -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+</head>
+<body>
+
+<!-- Hidden SVG gradient defs for timer ring -->
+<svg class="svg-defs" aria-hidden="true">
+  <defs>
+    <linearGradient id="timerGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<div id="app">
+
+  <!-- ══════════════════════════════════════════
+       PAGE: TIMER
+       ══════════════════════════════════════════ -->
+  <section id="page-timer" class="page active">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Focus Timer</div>
+        <div class="page-sub" id="date-display"></div>
+      </div>
+      <div id="firebase-dot" title="Firebase status" style="width:8px;height:8px;border-radius:50%;background:var(--text3);flex-shrink:0;"></div>
+    </div>
+
+    <!-- Ring timer -->
+    <div class="card" style="padding:20px 18px;">
+      <div class="timer-ring-wrap">
+        <svg class="timer-svg" viewBox="0 0 200 200">
+          <circle class="timer-ring-bg"       cx="100" cy="100" r="90"/>
+          <circle class="timer-ring-progress" cx="100" cy="100" r="90" id="timer-ring"/>
+        </svg>
+        <div class="timer-center">
+          <div class="timer-display" id="timer-display">00:00</div>
+          <div class="timer-label">elapsed</div>
+        </div>
+      </div>
+
+      <!-- Session status -->
+      <div class="session-status" style="justify-content:center; margin:0 0 16px;">
+        <div class="status-dot" id="status-dot"></div>
+        <span id="status-text">Ready to focus</span>
+      </div>
+
+      <!-- Subject picker -->
+      <select class="subject-selector" id="subject-select">
+        <option value="" disabled selected>Choose subject…</option>
+      </select>
+
+      <!-- Controls -->
+      <div class="timer-controls" style="margin-top:14px;">
+        <button class="btn btn-primary" id="btn-start">▶ Start</button>
+        <button class="btn btn-ghost"   id="btn-pause" disabled>⏸ Pause</button>
+        <button class="btn btn-danger"  id="btn-stop"  disabled>⏹ Stop</button>
+      </div>
+    </div>
+
+    <!-- Recent sessions -->
+    <div class="card mt-12">
+      <div class="card-title">Recent Sessions</div>
+      <div id="recent-sessions"></div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       PAGE: DASHBOARD
+       ══════════════════════════════════════════ -->
+  <section id="page-dashboard" class="page">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Dashboard</div>
+        <div class="page-sub">Your progress at a glance</div>
+      </div>
+    </div>
+
+    <!-- Streak -->
+    <div class="streak-card">
+      <div class="streak-flame">🔥</div>
+      <div>
+        <div class="streak-num" id="streak-num">0</div>
+        <div class="streak-label">Day Streak</div>
+        <div class="streak-sub" id="streak-sub">Start today!</div>
+      </div>
+    </div>
+
+    <!-- Stats grid -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon">⏱️</div>
+        <div class="stat-val" id="dash-today-hrs">0h</div>
+        <div class="stat-label">Today</div>
+        <div class="stat-badge badge-red" id="dash-perf-badge">🔴 Below target</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">📅</div>
+        <div class="stat-val" id="dash-week-hrs">0h</div>
+        <div class="stat-label">This Week</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">📝</div>
+        <div class="stat-val" id="dash-sessions">0</div>
+        <div class="stat-label">Sessions Today</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">🕐</div>
+        <div class="stat-val" id="dash-today-mins">0 min</div>
+        <div class="stat-label">Minutes Today</div>
+      </div>
+    </div>
+
+    <!-- Weekly chart -->
+    <div class="card">
+      <div class="card-title">Last 7 Days</div>
+      <div class="chart-wrap">
+        <canvas id="chart-week-dash"></canvas>
+      </div>
+    </div>
+
+    <!-- Daily target progress -->
+    <div class="card mt-12">
+      <div class="card-title">Today's Target</div>
+      <div class="target-bar-wrap">
+        <div class="target-labels">
+          <span>0h</span>
+          <span id="target-actual">0h today</span>
+        </div>
+        <div class="target-bar">
+          <div class="target-bar-fill" id="target-bar-fill" style="width:0%"></div>
+        </div>
+        <div class="target-ticks">
+          <div class="tick">
+            <div class="tick-line"></div>
+            <span>Min 4h</span>
+          </div>
+          <div class="tick good">
+            <div class="tick-line"></div>
+            <span>Good 6h</span>
+          </div>
+          <div class="tick excellent">
+            <div class="tick-line"></div>
+            <span>Best 8h</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Level cards -->
+      <div class="target-levels mt-12">
+        <div class="level-row">
+          <div class="level-indicator" style="background:var(--red)"></div>
+          <div style="flex:1">
+            <div class="level-name" style="color:var(--red)">Minimum</div>
+            <div class="level-sub">Below this is a red day</div>
+          </div>
+          <div class="level-hours">4h</div>
+        </div>
+        <div class="level-row">
+          <div class="level-indicator" style="background:var(--yellow)"></div>
+          <div style="flex:1">
+            <div class="level-name" style="color:var(--yellow)">Good</div>
+            <div class="level-sub">On track for exam</div>
+          </div>
+          <div class="level-hours">6h</div>
+        </div>
+        <div class="level-row">
+          <div class="level-indicator" style="background:var(--green)"></div>
+          <div style="flex:1">
+            <div class="level-name" style="color:var(--green)">Excellent</div>
+            <div class="level-sub">Ahead of schedule</div>
+          </div>
+          <div class="level-hours">8h</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       PAGE: ANALYTICS
+       ══════════════════════════════════════════ -->
+  <section id="page-analytics" class="page">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Analytics</div>
+        <div class="page-sub">Charts & trends</div>
+      </div>
+    </div>
+
+    <div class="analytics-tabs">
+      <button class="analytics-tab active" data-tab="week">Weekly</button>
+      <button class="analytics-tab"        data-tab="monthly">Monthly</button>
+      <button class="analytics-tab"        data-tab="subjects">Subjects</button>
+    </div>
+
+    <!-- Weekly section -->
+    <div class="chart-section active" id="section-week">
+      <div class="card">
+        <div class="card-title">Daily Hours – Last 7 Days</div>
+        <div class="chart-wrap">
+          <canvas id="chart-week"></canvas>
+        </div>
+      </div>
+      <div class="card mt-12">
+        <div class="card-title">Daily Breakdown</div>
+        <div id="perf-rows"></div>
+      </div>
+    </div>
+
+    <!-- Monthly section -->
+    <div class="chart-section" id="section-monthly">
+      <div class="card">
+        <div class="card-title">Weekly Totals – Last 4 Weeks</div>
+        <div class="chart-wrap">
+          <canvas id="chart-monthly"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Subjects section -->
+    <div class="chart-section" id="section-subjects">
+      <div class="card">
+        <div class="card-title">Subject-wise Distribution</div>
+        <div class="chart-wrap" style="height:260px">
+          <canvas id="chart-subjects"></canvas>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       PAGE: SUBJECTS
+       ══════════════════════════════════════════ -->
+  <section id="page-subjects" class="page">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Subjects</div>
+        <div class="page-sub">Manage your study topics</div>
+      </div>
+      <button class="btn btn-primary btn-sm" id="btn-add-subject">+ Add</button>
+    </div>
+
+    <div class="card">
+      <div id="subjects-list"></div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       PAGE: TARGETS
+       ══════════════════════════════════════════ -->
+  <section id="page-targets" class="page">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Targets</div>
+        <div class="page-sub">SSC CGL 2027 countdown</div>
+      </div>
+    </div>
+
+    <!-- Countdown boxes -->
+    <div class="card" style="padding:20px;">
+      <div class="card-title">Syllabus Deadline – Dec 31, 2026</div>
+      <div class="countdown-grid">
+        <div class="countdown-box">
+          <div class="countdown-num" id="days-to-deadline">—</div>
+          <div class="countdown-unit">Days Left</div>
+        </div>
+        <div class="countdown-box">
+          <div class="countdown-num" id="weeks-to-deadline">—</div>
+          <div class="countdown-unit">Weeks Left</div>
+        </div>
+        <div class="countdown-box">
+          <div class="countdown-num" id="days-to-exam">—</div>
+          <div class="countdown-unit">To Exam</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Required daily hours -->
+    <div class="card mt-12">
+      <div class="card-title">Dynamic Daily Target</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div>
+          <div style="font-size:13px;color:var(--text2);">Required per day to stay on track</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px;">Based on 6h/day baseline</div>
+        </div>
+        <div style="font-size:36px;font-weight:800;color:var(--accent2);letter-spacing:-1px;" id="req-daily-hrs">—</div>
+      </div>
+      <div class="flex-between text-sm" style="border-top:1px solid var(--border);padding-top:12px;">
+        <span>Total studied so far</span>
+        <span class="text-accent" id="total-studied">0h</span>
+      </div>
+    </div>
+
+    <!-- Target level reference -->
+    <div class="card mt-12">
+      <div class="card-title">Daily Performance Grid</div>
+      <div id="target-perf-list"></div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       BOTTOM NAVIGATION
+       ══════════════════════════════════════════ -->
+  <nav class="bottom-nav">
+    <button class="nav-btn active" data-tab="timer">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <circle cx="12" cy="12" r="9"/><polyline points="12 6 12 12 16 14"/>
+      </svg>
+      Timer
+    </button>
+    <button class="nav-btn" data-tab="dashboard">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+        <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+      </svg>
+      Dashboard
+    </button>
+    <button class="nav-btn" data-tab="analytics">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+      </svg>
+      Analytics
+    </button>
+    <button class="nav-btn" data-tab="subjects">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>
+      </svg>
+      Subjects
+    </button>
+    <button class="nav-btn" data-tab="targets">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/>
+        <line x1="12" y1="20" x2="12" y2="22"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/>
+      </svg>
+      Targets
+    </button>
+  </nav>
+
+</div><!-- /#app -->
+
+<!-- ══ Subject Modal ════════════════════════════════════════ -->
+<div class="modal-overlay" id="subject-modal-overlay">
+  <div class="modal">
+    <div class="modal-title">Subject</div>
+    <div class="add-form">
+      <input class="input-field" id="modal-subj-name" type="text" placeholder="e.g. Mathematics, GK, Reasoning…" maxlength="40" />
+      <select class="input-field select-field" id="modal-subj-strength">
+        <option value="neutral">Neutral</option>
+        <option value="weak">Weak (needs more focus)</option>
+        <option value="strong">Strong</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-full" id="btn-cancel-subject">Cancel</button>
+      <button class="btn btn-primary btn-full" id="btn-save-subject">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Toast ═════════════════════════════════════════════════ -->
+<div class="toast" id="toast"></div>
+
+<!-- ══ App bootstrap ══════════════════════════════════════════ -->
+<script src="./app.js"></script>
+
+
+
+</body>
+</html>
