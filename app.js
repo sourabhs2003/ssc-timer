@@ -75,10 +75,9 @@ var state = {
   tab: 'timer',
   subjects: [],
   sessions: [],
+  activeSession: null,
   timerRunning: false,
   timerPaused:  false,
-  timerStart:   null,
-  timerAccum:   0,
   timerInterval: null,
   selectedSubject: '',
   analyticsTab: 'week',
@@ -95,6 +94,7 @@ window.addEventListener('DOMContentLoaded', function() {
   bindSubjects();
   bindAnalyticsTabs();
   setDateDisplay();
+  checkActiveSession();
   // Firebase init (non-blocking, after render)
   setTimeout(initFirebase, 500);
 });
@@ -116,9 +116,14 @@ function setDateDisplay() {
 function loadFromLS() {
   state.subjects = LS.get('sscx_subjects', []);
   state.sessions  = LS.get('sscx_sessions', []);
+  state.activeSession = LS.get('sscx_active_session', null);
 }
 function saveSubjectsLS() { LS.set('sscx_subjects', state.subjects); }
 function saveSessionsLS()  { LS.set('sscx_sessions',  state.sessions); }
+function saveActiveSessionLS() {
+  if (state.activeSession) LS.set('sscx_active_session', state.activeSession);
+  else localStorage.removeItem('sscx_active_session');
+}
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 function bindNav() {
@@ -142,6 +147,36 @@ function switchTab(tab) {
 }
 
 // ── TIMER ─────────────────────────────────────────────────────────────────────
+function checkActiveSession() {
+  if (state.activeSession) {
+    state.selectedSubject = state.activeSession.subject;
+    var sel = document.getElementById('subject-select');
+    if (sel) sel.value = state.selectedSubject;
+    state.timerRunning = true;
+    if (state.activeSession.lastPauseTime) {
+      state.timerPaused = true;
+      setStatusDot('paused');
+    } else {
+      state.timerPaused = false;
+      setStatusDot('running');
+      startTick();
+    }
+    updateTimerButtons();
+    var elapsed = getActiveSessionElapsed();
+    renderTimerDisplay(elapsed);
+    updateRingProgress(elapsed);
+  }
+}
+
+function getActiveSessionElapsed() {
+  if (!state.activeSession) return 0;
+  var pauseMs = state.activeSession.accumulatedPause || 0;
+  if (state.activeSession.lastPauseTime) {
+    pauseMs += (Date.now() - state.activeSession.lastPauseTime);
+  }
+  return Math.floor((Date.now() - state.activeSession.startTime - pauseMs) / 1000);
+}
+
 function bindTimer() {
   document.getElementById('btn-start').addEventListener('click', timerStart);
   document.getElementById('btn-pause').addEventListener('click', timerPause);
@@ -152,44 +187,57 @@ function timerStart() {
   var subj = document.getElementById('subject-select').value;
   if (!subj) { showToast('⚠️ Select a subject first!'); return; }
   state.selectedSubject = subj;
-  if (state.timerPaused) {
-    state.timerStart = Date.now();
+  
+  if (state.timerPaused && state.activeSession) {
+    var pauseDuration = Date.now() - state.activeSession.lastPauseTime;
+    state.activeSession.accumulatedPause = (state.activeSession.accumulatedPause || 0) + pauseDuration;
+    state.activeSession.lastPauseTime = null;
     state.timerPaused = false;
     setStatusDot('running');
+    saveActiveSessionLS();
   } else if (!state.timerRunning) {
-    state.timerAccum   = 0;
-    state.timerStart   = Date.now();
+    state.activeSession = {
+      subject: subj,
+      startTime: Date.now(),
+      accumulatedPause: 0,
+      lastPauseTime: null
+    };
     state.timerRunning = true;
     state.timerPaused  = false;
     setStatusDot('running');
+    saveActiveSessionLS();
   }
   startTick();
   updateTimerButtons();
 }
 
 function timerPause() {
-  if (!state.timerRunning || state.timerPaused) return;
-  state.timerAccum += Math.floor((Date.now() - state.timerStart) / 1000);
+  if (!state.timerRunning || state.timerPaused || !state.activeSession) return;
+  state.activeSession.lastPauseTime = Date.now();
   state.timerPaused = true;
   clearInterval(state.timerInterval);
   setStatusDot('paused');
+  saveActiveSessionLS();
   updateTimerButtons();
 }
 
 function timerStop() {
-  if (!state.timerRunning) return;
+  if (!state.timerRunning || !state.activeSession) return;
   clearInterval(state.timerInterval);
-  var total = state.timerAccum;
-  if (!state.timerPaused) total += Math.floor((Date.now() - state.timerStart) / 1000);
-  if (total < 30) { showToast('⚡ Session too short – keep going!'); resetTimer(); return; }
+  
+  var totalSec = getActiveSessionElapsed();
+  if (totalSec < 30) { 
+    showToast('⚡ Session too short – keep going!'); 
+    resetTimer(); 
+    return; 
+  }
 
-  var mins    = Math.round(total / 60);
+  var mins    = Math.round(totalSec / 60);
   var endTime = new Date();
-  // startTime = endTime minus total seconds
-  var startTime = new Date(endTime.getTime() - total * 1000);
+  var startTime = new Date(endTime.getTime() - totalSec * 1000);
   var session = {
     id:        's_' + Date.now(),
-    subject:   state.selectedSubject,
+    subject:   state.activeSession.subject,
     startTime: startTime.toISOString(),
     endTime:   endTime.toISOString(),
     duration:  mins,
@@ -200,7 +248,7 @@ function timerStop() {
   fbAdd('sessions', session).then(function(id) {
     if (id) { session.id = id; saveSessionsLS(); }
   });
-  showToast('✅ ' + mins + ' min logged – ' + state.selectedSubject);
+  showToast('✅ ' + mins + ' min logged – ' + state.activeSession.subject);
   resetTimer();
   renderRecentSessions();
   if (state.tab === 'dashboard') renderDashboard();
@@ -209,7 +257,7 @@ function timerStop() {
 function startTick() {
   clearInterval(state.timerInterval);
   state.timerInterval = setInterval(function() {
-    var elapsed = state.timerAccum + Math.floor((Date.now() - state.timerStart) / 1000);
+    var elapsed = getActiveSessionElapsed();
     renderTimerDisplay(elapsed);
     updateRingProgress(elapsed);
   }, 1000);
@@ -234,8 +282,8 @@ function updateRingProgress(elapsed) {
 function resetTimer() {
   state.timerRunning = false;
   state.timerPaused  = false;
-  state.timerAccum   = 0;
-  state.timerStart   = null;
+  state.activeSession = null;
+  saveActiveSessionLS();
   clearInterval(state.timerInterval);
   renderTimerDisplay(0);
   updateRingProgress(0);
