@@ -63,22 +63,23 @@ async function fbGetAll(col) {
 
 async function syncFromFirebase() {
   try {
-    const [fbSubj, fbSess] = await Promise.all([fbGetAll('subjects'), fbGetAll('sessions')]);
+    const [fbSubj, fbSess, fbTodo] = await Promise.all([fbGetAll('subjects'), fbGetAll('sessions'), fbGetAll('todos')]);
     if (fbSubj.length) { state.subjects = fbSubj; saveSubjectsLS(); }
-    if (fbSess.length) { state.sessions  = fbSess;  saveSessionsLS(); }
+    if (fbSess.length) { state.sessions = fbSess; saveSessionsLS(); }
+    if (fbTodo.length) { state.todos = fbTodo; saveTodosLS(); }
+    
+    checkDailyReset();
     renderAll();
   } catch {}
 }
 
-// ── State ─────────────────────────────────────────────────────────────────────
 var state = {
   tab: 'timer',
   subjects: [],
   sessions: [],
+  todos: [],
+  taskTab: 'daily',
   activeSession: null,
-  timerRunning: false,
-  timerPaused:  false,
-  timerInterval: null,
   selectedSubject: '',
   analyticsTab: 'week',
 };
@@ -88,10 +89,12 @@ var charts = {};
 window.addEventListener('DOMContentLoaded', function() {
   registerSW();
   loadFromLS();
+  checkDailyReset();
   renderAll();
   bindNav();
   bindTimer();
   bindSubjects();
+  bindTodos();
   bindAnalyticsTabs();
   setDateDisplay();
   checkActiveSession();
@@ -115,11 +118,13 @@ function setDateDisplay() {
 // ── LS ────────────────────────────────────────────────────────────────────────
 function loadFromLS() {
   state.subjects = LS.get('sscx_subjects', []);
-  state.sessions  = LS.get('sscx_sessions', []);
+  state.sessions = LS.get('sscx_sessions', []);
+  state.todos    = LS.get('sscx_todos', []);
   state.activeSession = LS.get('sscx_active_session', null);
 }
 function saveSubjectsLS() { LS.set('sscx_subjects', state.subjects); }
-function saveSessionsLS()  { LS.set('sscx_sessions',  state.sessions); }
+function saveSessionsLS() { LS.set('sscx_sessions', state.sessions); }
+function saveTodosLS()    { LS.set('sscx_todos', state.todos); }
 function saveActiveSessionLS() {
   if (state.activeSession) LS.set('sscx_active_session', state.activeSession);
   else localStorage.removeItem('sscx_active_session');
@@ -144,6 +149,7 @@ function switchTab(tab) {
   if (tab === 'targets')   renderTargets();
   if (tab === 'subjects')  renderSubjectsList();
   if (tab === 'timer')     renderRecentSessions();
+  if (tab === 'tasks')     renderTasks();
 }
 
 // ── TIMER ─────────────────────────────────────────────────────────────────────
@@ -152,34 +158,30 @@ function checkActiveSession() {
     state.selectedSubject = state.activeSession.subject;
     var sel = document.getElementById('subject-select');
     if (sel) sel.value = state.selectedSubject;
-    state.timerRunning = true;
-    if (state.activeSession.lastPauseTime) {
-      state.timerPaused = true;
-      setStatusDot('paused');
-    } else {
-      state.timerPaused = false;
-      setStatusDot('running');
-      startTick();
-    }
-    updateTimerButtons();
-    var elapsed = getActiveSessionElapsed();
-    renderTimerDisplay(elapsed);
-    updateRingProgress(elapsed);
+    
+    var timeStr = new Date(state.activeSession.startTime).toLocaleTimeString([], {hour: 'numeric', minute:'2-digit'});
+    var subjField = document.getElementById('active-session-subject');
+    var timeField = document.getElementById('active-session-time');
+    
+    if(subjField) subjField.textContent = state.selectedSubject;
+    if(timeField) timeField.textContent = timeStr;
+    
+    var startView = document.getElementById('session-start-view');
+    var activeView = document.getElementById('session-active-view');
+    if(startView) startView.classList.add('hidden');
+    if(activeView) activeView.classList.remove('hidden');
+  } else {
+    var startView = document.getElementById('session-start-view');
+    var activeView = document.getElementById('session-active-view');
+    if(startView) startView.classList.remove('hidden');
+    if(activeView) activeView.classList.add('hidden');
   }
 }
 
-function getActiveSessionElapsed() {
-  if (!state.activeSession) return 0;
-  var pauseMs = state.activeSession.accumulatedPause || 0;
-  if (state.activeSession.lastPauseTime) {
-    pauseMs += (Date.now() - state.activeSession.lastPauseTime);
-  }
-  return Math.floor((Date.now() - state.activeSession.startTime - pauseMs) / 1000);
-}
+// getActiveSessionElapsed removed as it's no longer needed for continuous display
 
 function bindTimer() {
   document.getElementById('btn-start').addEventListener('click', timerStart);
-  document.getElementById('btn-pause').addEventListener('click', timerPause);
   document.getElementById('btn-stop').addEventListener('click',  timerStop);
 }
 
@@ -188,59 +190,36 @@ function timerStart() {
   if (!subj) { showToast('⚠️ Select a subject first!'); return; }
   state.selectedSubject = subj;
   
-  if (state.timerPaused && state.activeSession) {
-    var pauseDuration = Date.now() - state.activeSession.lastPauseTime;
-    state.activeSession.accumulatedPause = (state.activeSession.accumulatedPause || 0) + pauseDuration;
-    state.activeSession.lastPauseTime = null;
-    state.timerPaused = false;
-    setStatusDot('running');
-    saveActiveSessionLS();
-  } else if (!state.timerRunning) {
+  if (!state.activeSession) {
     state.activeSession = {
       subject: subj,
       startTime: Date.now(),
-      accumulatedPause: 0,
-      lastPauseTime: null
+      isActive: true
     };
-    state.timerRunning = true;
-    state.timerPaused  = false;
-    setStatusDot('running');
     saveActiveSessionLS();
+    checkActiveSession(); // Re-renders the session card
   }
-  startTick();
-  updateTimerButtons();
-}
-
-function timerPause() {
-  if (!state.timerRunning || state.timerPaused || !state.activeSession) return;
-  state.activeSession.lastPauseTime = Date.now();
-  state.timerPaused = true;
-  clearInterval(state.timerInterval);
-  setStatusDot('paused');
-  saveActiveSessionLS();
-  updateTimerButtons();
 }
 
 function timerStop() {
-  if (!state.timerRunning || !state.activeSession) return;
-  clearInterval(state.timerInterval);
+  if (!state.activeSession) return;
   
-  var totalSec = getActiveSessionElapsed();
-  if (totalSec < 30) { 
+  var endTime = Date.now();
+  var totalSec = Math.floor((endTime - state.activeSession.startTime) / 1000);
+  
+  if (totalSec < 60) { 
     showToast('⚡ Session too short – keep going!'); 
     resetTimer(); 
     return; 
   }
 
-  var mins    = Math.round(totalSec / 60);
-  var endTime = new Date();
-  var startTime = new Date(endTime.getTime() - totalSec * 1000);
+  var durationMins = Math.round(totalSec / 60);
   var session = {
     id:        's_' + Date.now(),
     subject:   state.activeSession.subject,
-    startTime: startTime.toISOString(),
-    endTime:   endTime.toISOString(),
-    duration:  mins,
+    startTime: new Date(state.activeSession.startTime).toISOString(),
+    endTime:   new Date(endTime).toISOString(),
+    duration:  durationMins,
     date:      TODAY(),
   };
   state.sessions.unshift(session);
@@ -248,71 +227,21 @@ function timerStop() {
   fbAdd('sessions', session).then(function(id) {
     if (id) { session.id = id; saveSessionsLS(); }
   });
-  showToast('✅ ' + mins + ' min logged – ' + state.activeSession.subject);
+  showToast('✅ ' + durationMins + ' min logged – ' + state.activeSession.subject);
   resetTimer();
   renderRecentSessions();
   if (state.tab === 'dashboard') renderDashboard();
 }
 
-function startTick() {
-  clearInterval(state.timerInterval);
-  state.timerInterval = setInterval(function() {
-    var elapsed = getActiveSessionElapsed();
-    renderTimerDisplay(elapsed);
-    updateRingProgress(elapsed);
-  }, 1000);
-}
-
-function renderTimerDisplay(totalSec) {
-  var h = Math.floor(totalSec / 3600);
-  var m = Math.floor((totalSec % 3600) / 60);
-  var s = totalSec % 60;
-  var display = h > 0 ? (pad(h) + ':' + pad(m) + ':' + pad(s)) : (pad(m) + ':' + pad(s));
-  var el = document.getElementById('timer-display');
-  if (el) el.textContent = display;
-}
-
-function updateRingProgress(elapsed) {
-  var ring = document.getElementById('timer-ring');
-  if (!ring) return;
-  var pct = Math.min(elapsed / (8 * 3600), 1);
-  ring.style.strokeDashoffset = 628 * (1 - pct);
-}
+// Animation and render UI functions removed for static card view
 
 function resetTimer() {
-  state.timerRunning = false;
-  state.timerPaused  = false;
   state.activeSession = null;
   saveActiveSessionLS();
-  clearInterval(state.timerInterval);
-  renderTimerDisplay(0);
-  updateRingProgress(0);
-  setStatusDot('idle');
-  updateTimerButtons();
+  checkActiveSession(); // This will clear the card and show the Start UI
 }
 
-function setStatusDot(status) {
-  var dot = document.getElementById('status-dot');
-  var txt = document.getElementById('status-text');
-  if (!dot) return;
-  dot.className = 'status-dot ' + status;
-  var labels = { idle: 'Ready to focus', running: 'Session running…', paused: 'Paused' };
-  if (txt) txt.textContent = labels[status] || '';
-}
-
-function updateTimerButtons() {
-  var start  = document.getElementById('btn-start');
-  var pause  = document.getElementById('btn-pause');
-  var stop   = document.getElementById('btn-stop');
-  var running = state.timerRunning && !state.timerPaused;
-  start.textContent  = state.timerPaused ? '▶ Resume' : '▶ Start';
-  start.disabled     = running;
-  pause.disabled     = !running;
-  stop.disabled      = !state.timerRunning;
-  start.style.opacity = running  ? '0.4' : '1';
-  pause.style.opacity = !running ? '0.4' : '1';
-  stop.style.opacity  = !state.timerRunning ? '0.4' : '1';
-}
+// old logic for updateTimerButtons removed
 
 function renderRecentSessions() {
   var container = document.getElementById('recent-sessions');
@@ -433,6 +362,153 @@ function populateSubjectPicker() {
         return '<option value="' + s.name + '"' + (s.name === cur ? ' selected' : '') + '>' + s.name + '</option>';
       }).join('')
     : '<option value="" disabled selected>Add subjects first</option>';
+}
+
+// ── TODOS ─────────────────────────────────────────────────────────────────────
+function checkDailyReset() {
+  var lastDate = LS.get('sscx_last_date', null);
+  var today = TODAY();
+  if (lastDate !== today) {
+    var modified = false;
+    state.todos.forEach(function(t) {
+      if (t.type === 'daily' && t.status === 'completed') {
+        t.status = 'pending';
+        fbSet('todos', t.id, { status: 'pending' });
+        modified = true;
+      }
+    });
+    if (modified) saveTodosLS();
+    LS.set('sscx_last_date', today);
+  }
+}
+
+function bindTodos() {
+  var btnAdd = document.getElementById('btn-add-task');
+  if(btnAdd) btnAdd.addEventListener('click', openTaskModal);
+  var btnSave = document.getElementById('btn-save-task');
+  if(btnSave) btnSave.addEventListener('click', saveTask);
+  var btnCancel = document.getElementById('btn-cancel-task');
+  if(btnCancel) btnCancel.addEventListener('click', closeTaskModal);
+  var overlay = document.getElementById('task-modal-overlay');
+  if(overlay) overlay.addEventListener('click', function(e) {
+    if (e.target.id === 'task-modal-overlay') closeTaskModal();
+  });
+}
+
+window.switchTaskTab = function(type) {
+  state.taskTab = type;
+  document.querySelectorAll('.analytics-tab[data-tab^="tasks-"]').forEach(function(b) {
+    b.classList.toggle('active', b.dataset.tab === 'tasks-' + type);
+  });
+  renderTasks();
+}
+
+function openTaskModal() {
+  document.getElementById('modal-task-title').value = '';
+  document.getElementById('modal-task-priority').value = 'Medium';
+  document.getElementById('modal-task-type').value = state.taskTab;
+  document.getElementById('task-modal-overlay').classList.add('show');
+  setTimeout(function() { document.getElementById('modal-task-title').focus(); }, 100);
+}
+function closeTaskModal() { document.getElementById('task-modal-overlay').classList.remove('show'); }
+
+function saveTask() {
+  var title = document.getElementById('modal-task-title').value.trim();
+  var priority = document.getElementById('modal-task-priority').value;
+  var type = document.getElementById('modal-task-type').value;
+  if (!title) { showToast('Enter task title'); return; }
+  
+  var newTask = {
+    id: 't_' + Date.now(),
+    title: title,
+    priority: priority,
+    type: type,
+    status: 'pending',
+    createdAt: Date.now()
+  };
+  state.todos.push(newTask);
+  saveTodosLS();
+  fbAdd('todos', newTask).then(function(id) { if(id) { newTask.id = id; saveTodosLS(); } });
+  
+  closeTaskModal();
+  if (state.taskTab !== type) switchTaskTab(type);
+  else renderTasks();
+}
+
+window.toggleTask = function(id, el) {
+  var task = state.todos.find(function(t) { return t.id === id; });
+  if (!task) return;
+  
+  var isCompleting = task.status !== 'completed';
+  task.status = isCompleting ? 'completed' : 'pending';
+  saveTodosLS();
+  fbSet('todos', id, { status: task.status });
+  
+  if (isCompleting) {
+    var card = el.closest('.task-card');
+    if(card) {
+      card.classList.add('anim-success-pop');
+      spawnConfetti(el);
+      setTimeout(function() { renderTasks(); }, 500);
+      return;
+    }
+  }
+  renderTasks();
+}
+
+window.deleteTask = function(id) {
+  state.todos = state.todos.filter(function(t) { return t.id !== id; });
+  saveTodosLS();
+  fbDelete('todos', id);
+  renderTasks();
+  showToast('Task removed');
+}
+
+function renderTasks() {
+  var container = document.getElementById('tasks-list');
+  if (!container) return;
+  var filtered = state.todos.filter(function(t) { return t.type === state.taskTab; });
+  var pending = filtered.filter(function(t) { return t.status !== 'completed'; });
+  var completed = filtered.filter(function(t) { return t.status === 'completed'; });
+  var all = pending.concat(completed);
+  
+  if (!all.length) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📝</div><div class="empty-state-text">No ' + state.taskTab + ' tasks</div></div>';
+    return;
+  }
+  
+  container.innerHTML = all.map(function(t) {
+    var checked = t.status === 'completed' ? 'checked' : '';
+    var classes = checked ? 'task-card completed' : 'task-card';
+    return '<div class="' + classes + ' priority-' + t.priority + '">' +
+      '<input type="checkbox" class="task-checkbox" ' + checked + ' onchange="toggleTask(\'' + t.id + '\', this)">' +
+      '<div class="task-content">' +
+        '<div class="task-title">' + t.title + '</div>' +
+        '<div class="task-meta">' +
+          '<span class="task-badge badge-' + t.type + '">' + t.type + '</span>' +
+          '<span>' + t.priority + ' Priority</span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="task-actions">' +
+        '<button class="btn btn-ghost btn-icon btn-sm" onclick="deleteTask(\'' + t.id + '\')">🗑️</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function spawnConfetti(el) {
+  var cont = document.getElementById('confetti-container');
+  if(!cont) return;
+  var rect = el.getBoundingClientRect();
+  for(var i=0; i<10; i++) {
+    var c = document.createElement('div');
+    c.className = 'confetti';
+    c.style.left = (rect.left + 5 + Math.random()*15) + 'px';
+    c.style.top = (rect.top + 5 + Math.random()*15) + 'px';
+    c.style.background = ['#22c55e', '#eab308', '#6366f1', '#06b6d4', '#f97316'][Math.floor(Math.random()*5)];
+    cont.appendChild(c);
+    (function(elNode){ setTimeout(function() { if(elNode.parentNode) elNode.parentNode.removeChild(elNode); }, 1500); })(c);
+  }
 }
 
 // ── DASHBOARD ──────────────────────────────────────────────────────────────────
@@ -679,6 +755,7 @@ function renderAll() {
   renderRecentSessions();
   renderSubjectsList();
   renderDashboard();
+  renderTasks();
   // activate default tab
   var page = document.getElementById('page-' + state.tab);
   if (page) page.classList.add('active');

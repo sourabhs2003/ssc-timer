@@ -45,36 +45,39 @@
       <div id="firebase-dot" title="Firebase status" style="width:8px;height:8px;border-radius:50%;background:var(--text3);flex-shrink:0;"></div>
     </div>
 
-    <!-- Ring timer -->
-    <div class="card" style="padding:20px 18px;">
-      <div class="timer-ring-wrap">
-        <svg class="timer-svg" viewBox="0 0 200 200">
-          <circle class="timer-ring-bg"       cx="100" cy="100" r="90"/>
-          <circle class="timer-ring-progress" cx="100" cy="100" r="90" id="timer-ring"/>
-        </svg>
-        <div class="timer-center">
-          <div class="timer-display" id="timer-display">00:00</div>
-          <div class="timer-label">elapsed</div>
+    <!-- Session Container -->
+    <div class="card" style="padding:24px 18px;">
+      
+      <!-- START FORM (Hidden when session active) -->
+      <div id="session-start-view">
+        <div style="text-align:center;margin-bottom:20px;">
+          <div style="font-size:48px;opacity:0.8;">⏱️</div>
+          <div style="font-size:16px;font-weight:600;margin-top:12px;">Ready to focus</div>
+          <div style="font-size:13px;color:var(--text3);margin-top:4px;">Select a subject and start working.</div>
+        </div>
+        
+        <select class="subject-selector" id="subject-select">
+          <option value="" disabled selected>Choose subject…</option>
+        </select>
+
+        <div class="timer-controls" style="margin-top:16px;">
+          <button class="btn btn-primary btn-full" id="btn-start" style="font-size:16px;padding:16px;">▶ Start Session</button>
         </div>
       </div>
 
-      <!-- Session status -->
-      <div class="session-status" style="justify-content:center; margin:0 0 16px;">
-        <div class="status-dot" id="status-dot"></div>
-        <span id="status-text">Ready to focus</span>
+      <!-- ACTIVE SESSION (Hidden when no session) -->
+      <div id="session-active-view" class="hidden">
+        <div class="active-session-card">
+          <div class="pulse-ring"></div>
+          <div style="font-size:24px;margin-bottom:12px;">🔥</div>
+          <div style="font-size:13px;color:var(--accent3);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Session in Progress</div>
+          <div id="active-session-subject" style="font-size:28px;font-weight:800;letter-spacing:-1px;margin-bottom:6px;">Subject Name</div>
+          <div style="font-size:14px;color:var(--text2);margin-bottom:24px;">Started at <span id="active-session-time" style="color:var(--text);font-weight:600;">9:00 AM</span></div>
+          
+          <button class="btn btn-danger btn-full" id="btn-stop" style="font-size:16px;padding:16px;border-radius:12px;">⏹ End Session</button>
+        </div>
       </div>
 
-      <!-- Subject picker -->
-      <select class="subject-selector" id="subject-select">
-        <option value="" disabled selected>Choose subject…</option>
-      </select>
-
-      <!-- Controls -->
-      <div class="timer-controls" style="margin-top:14px;">
-        <button class="btn btn-primary" id="btn-start">▶ Start</button>
-        <button class="btn btn-ghost"   id="btn-pause" disabled>⏸ Pause</button>
-        <button class="btn btn-danger"  id="btn-stop"  disabled>⏹ Stop</button>
-      </div>
     </div>
 
     <!-- Recent sessions -->
@@ -318,6 +321,27 @@
   </section>
 
   <!-- ══════════════════════════════════════════
+       PAGE: TASKS
+       ══════════════════════════════════════════ -->
+  <section id="page-tasks" class="page">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Tasks</div>
+        <div class="page-sub">Manage your study plan</div>
+      </div>
+      <button class="btn btn-primary btn-sm" id="btn-add-task">+ New Task</button>
+    </div>
+
+    <div class="analytics-tabs" style="margin-bottom:12px;">
+      <button class="analytics-tab active" data-tab="tasks-daily" onclick="switchTaskTab('daily')">Daily Tasks</button>
+      <button class="analytics-tab" data-tab="tasks-weekly" onclick="switchTaskTab('weekly')">Weekly Tasks</button>
+    </div>
+
+    <!-- Task List -->
+    <div id="tasks-list" style="display:flex;flex-direction:column;gap:12px;"></div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
        BOTTOM NAVIGATION
        ══════════════════════════════════════════ -->
   <nav class="bottom-nav">
@@ -353,6 +377,12 @@
       </svg>
       Targets
     </button>
+    <button class="nav-btn" data-tab="tasks">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+      </svg>
+      Tasks
+    </button>
   </nav>
 
 </div><!-- /#app -->
@@ -375,6 +405,34 @@
     </div>
   </div>
 </div>
+
+<!-- ══ Task Modal ═══════════════════════════════════════════ -->
+<div class="modal-overlay" id="task-modal-overlay">
+  <div class="modal">
+    <div class="modal-title">New Task</div>
+    <div class="add-form">
+      <input class="input-field" id="modal-task-title" type="text" placeholder="Task description…" maxlength="60" />
+      <div class="add-form-row">
+        <select class="input-field select-field" id="modal-task-priority" style="flex:1">
+          <option value="High">🔴 High Priority</option>
+          <option value="Medium" selected>🟡 Medium</option>
+          <option value="Low">🟢 Low Priority</option>
+        </select>
+        <select class="input-field select-field" id="modal-task-type" style="flex:1">
+          <option value="daily" selected>Daily</option>
+          <option value="weekly">Weekly</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-full" id="btn-cancel-task">Cancel</button>
+      <button class="btn btn-primary btn-full" id="btn-save-task">Save Task</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Success Confetti Container ═══════════════════════════ -->
+<div id="confetti-container"></div>
 
 <!-- ══ Toast ═════════════════════════════════════════════════ -->
 <div class="toast" id="toast"></div>
